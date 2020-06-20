@@ -1,4 +1,3 @@
-
 module.exports = {
   mode: 'universal',
   /*
@@ -35,12 +34,19 @@ module.exports = {
   ** Nuxt.js dev-modules
   */
   buildModules: [
+    "@nuxtjs/eslint-module"
   ],
   /*
   ** Nuxt.js modules
   */
   modules: [
+    // Using package name
+    '@nuxtjs/axios',
+    "@nuxtjs/proxy"
   ],
+  axios: {
+    proxy: true
+  },
   /*
   ** Build configuration
   */
@@ -50,6 +56,15 @@ module.exports = {
     ** You can extend webpack config here
     */
     extend (config, ctx) {
+    }
+  },
+  proxy: {
+    "/api": {
+      target: "http://localhost:7001",
+      secure:false,
+      pathRewrite: {
+        "^/api": ""
+      }
     }
   }
 }
