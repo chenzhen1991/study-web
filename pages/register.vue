@@ -48,7 +48,7 @@
                 {type: "email", message: "请输入正确的邮箱格式"}
               ],
               captcha: [
-                {required: true, message: "请输入邮箱"},
+                {required: true, message: "请输入验证码"},
               ],
               nickname: [
                 {required: true, message: "请输入昵称"},
@@ -83,6 +83,7 @@
                   captcha: this.form.captcha
                 }
                 let ret = await this.$http.post("/user/register", obj)
+                console.log(ret)
                 if(ret.code ==0){
                   this.$alert('注册成功', {
                     confirmButtonText: "去登陆",
@@ -91,7 +92,7 @@
                     }
                   })
                 }else{
-                  this.$router.error(ret.message)
+                  this.$message.error(ret.message)
                 }
               } else {
                 console.log("校验失败")

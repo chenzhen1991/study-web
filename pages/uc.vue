@@ -1,0 +1,19 @@
+<template>
+    <div>
+      <h1>用户中心</h1>
+    </div>
+</template>
+
+<script>
+    export default {
+      name: "uc",
+      async mounted() {
+        const ret = await this.$http.get('/user/info')
+        console.log(ret)
+      }
+    }
+</script>
+
+<style scoped>
+
+</style>
