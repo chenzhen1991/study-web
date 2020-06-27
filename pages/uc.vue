@@ -14,6 +14,28 @@
         <p>计算hash的进度</p>
         <el-progress :stroke-width="20" :text-inside="true" :percentage="hashProgress"></el-progress>
       </div>
+      <div>
+<!--        chunk.progress-->
+<!--        progress< 0 报错 显示红色-->
+<!--        == 100 成功-->
+<!--        别的数字 方块高度显示-->
+<!--        尽可能让方块看起来是正方形-->
+<!--        比如10个方块 4* 4-->
+        <div class="cube-container" :style="{width:cubeWidth + 'px'}">
+          <div class="cube" v-for="chunk in chunks" :key="chunk.name">
+            <div
+              :class="{
+                'uploading': chunk.progress< 100 && chunk.progress>0,
+                'success': chunk.progress == 100,
+                'error': chunk.progress < 0
+              }"
+              :style="{height:chunks.progress + '%'}"
+            >
+              <i class="el-icon-loading" style="color:#f56c6c" v-if="chunk.progress< 100 && chunk.progress>0"></i>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 </template>
 
@@ -25,9 +47,23 @@
       data(){
         return {
           file: null,
-          uploadProgress: 0,
-          chunks: '',
-          hashProgress: 0
+          // uploadProgress: 0,
+          chunks: [],
+          hashProgress: 0,
+          hash: ''
+        }
+      },
+      computed:{
+        cubeWidth(){
+          return Math.ceil(Math.sqrt(this.chunks.length)) * 16
+        },
+        uploadProgress(){
+          if(!this.file || this.chunks.length){
+            return 0
+          }
+          const loaded = this.chunks.map(item => item.chunk.size * item.progress)
+                              .reduce((acc, cur) => acc + cur, 0)
+          return parseInt(((loaded * 100) / this.file.size).toFixed(2))
         }
       },
       async mounted() {
@@ -198,25 +234,61 @@
             console.log('文件格式正确')
           }
           // 制作切片
-          this.chunks = this.createFileChunk(this.file)
+          const chunks = this.createFileChunk(this.file)
+          console.log(chunks)
           // const hash = await this.calculateHashWorker()
           // console.log('文件hash', hash)
           // const hash1 = await this.calculateHashIdle()
           // console.log('文件hash1', hash1)
           // 抽样hash 不算全量
-          // 布隆过滤器 损失一小部分的
+          // 布隆过滤器 损失一小部分的精度 换取效率
           const hash2 = await this.calculateHashSample()
           console.log('文件hash2', hash2)
-          return
-          const form = new FormData()
-          form.append('name', 'file')
-          form.append('file', this.file)
-          const ret = this.$http.post('/uploadfile', form, {
-            onUploadProgress: progress => {
-             this.uploadProgress = Number((progress.loaded / progress.total) * 100).toFixed(2)
+          this.hash = hash2
+          // return
+          this.chunks = chunks.map((chunk, index) => {
+            // 切片的名字 hash+index
+            const name = hash2 + '-' + index
+            return {
+              hash: hash2,
+              name,
+              index,
+              chunk: chunk.file
             }
           })
-          console.log(ret)
+          console.log('this.chunks', this.chunks)
+
+          await this.uploadChunks()
+
+          // const form = new FormData()
+          // form.append('name', 'file')
+          // form.append('file', this.file)
+          // const ret = this.$http.post('/uploadfile', form, {
+          //   onUploadProgress: progress => {
+          //    this.uploadProgress = Number((progress.loaded / progress.total) * 100).toFixed(2)
+          //   }
+          // })
+          // console.log(ret)
+        },
+        async uploadChunks(){
+          const requests = this.chunks.map((chunk, index) => {
+            const form = new FormData()
+            form.append('chunk', chunk.chunk)
+            form.append('hash', chunk.hash)
+            form.append('name', chunk.name)
+            form.append('index', chunk.index)
+
+            return form
+          }).map((form, index) => {
+            this.$http.post('/uploadfile', form,{
+              onUploadProgress: progress => {
+                // 不是整体的精度条，二十每个区块有自己的进度条，整体的进度条需要计算
+                this.chunks[index].progress = Number((progress.loaded / progress.total) * 100).toFixed(2)
+              }
+            })
+          })
+          //并发量控制
+          await Promise.all(requests)
         },
         handleFilerChange(e) {
 
@@ -235,4 +307,18 @@
     border 2px dashed #eee
     text-align center
     vertical-align middle
+  .cube-container
+    .cube
+      width 14px
+      height 14px
+      border 1px solid black
+      line-height 12px
+      background-color #eee
+      float left
+    >.success
+      background green
+    >.uploading
+      background blue
+    >.error
+      background red
 </style>
