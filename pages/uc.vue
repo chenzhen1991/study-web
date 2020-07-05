@@ -1,6 +1,7 @@
 <template>
     <div>
       <h1>用户中心</h1>
+      <i class="el-icon-loading"></i>
       <div ref="drag" id="drag">
         <input type="file" name="file" @change="handleFilerChange">
       </div>
@@ -29,7 +30,7 @@
                 'success': chunk.progress == 100,
                 'error': chunk.progress < 0
               }"
-              :style="{height:chunks.progress + '%'}"
+              :style="{height:chunk.progress + '%'}"
             >
               <i class="el-icon-loading" style="color:#f56c6c" v-if="chunk.progress< 100 && chunk.progress>0"></i>
             </div>
@@ -227,15 +228,19 @@
           })
         },
         async uploadFile(){
-          if(!await this.isImage(this.file)){
-            console.log('文件格式不对')
+          // if(!await this.isImage(this.file)){
+          //   console.log('文件格式不对')
+          //   return
+          // }else{
+          //   console.log('文件格式正确')
+          // }
+
+          if(!this.file){
             return
-          }else{
-            console.log('文件格式正确')
           }
           // 制作切片
           const chunks = this.createFileChunk(this.file)
-          console.log(chunks)
+          // console.log(chunks)
           // const hash = await this.calculateHashWorker()
           // console.log('文件hash', hash)
           // const hash1 = await this.calculateHashIdle()
@@ -245,6 +250,16 @@
           const hash2 = await this.calculateHashSample()
           console.log('文件hash2', hash2)
           this.hash = hash2
+
+          // 断点续传 问一下后端，文件是否上传过，如果没有，是否存在切片
+          const { data: { uploaded, uploadedList } } = await this.$http.post('/checkfile', {
+            hash: this.hash,
+            ext: this.file.name.split('.').pop()
+          })
+          console.log(uploaded, uploadedList)
+          if(uploaded){
+            return this.$message.success('秒传成功！')
+          }
           // return
           this.chunks = chunks.map((chunk, index) => {
             // 切片的名字 hash+index
@@ -253,12 +268,13 @@
               hash: hash2,
               name,
               index,
-              chunk: chunk.file
+              chunk: chunk.file,
+              progress: uploadedList.indexOf(name) >= 1 ? 100 : 0
             }
           })
-          console.log('this.chunks', this.chunks)
+          // console.log('this.chunks', this.chunks)
 
-          await this.uploadChunks()
+          await this.uploadChunks(uploadedList)
 
           // const form = new FormData()
           // form.append('name', 'file')
@@ -270,25 +286,95 @@
           // })
           // console.log(ret)
         },
-        async uploadChunks(){
-          const requests = this.chunks.map((chunk, index) => {
+        async uploadChunks(uploadedList=[]){
+          const requests = this.chunks
+            .filter(chunk => uploadedList.indexOf(chunk.name) == -1)
+            .map((chunk, index) => {
             const form = new FormData()
             form.append('chunk', chunk.chunk)
             form.append('hash', chunk.hash)
             form.append('name', chunk.name)
             form.append('index', chunk.index)
 
-            return form
-          }).map((form, index) => {
-            this.$http.post('/uploadfile', form,{
-              onUploadProgress: progress => {
-                // 不是整体的精度条，二十每个区块有自己的进度条，整体的进度条需要计算
-                this.chunks[index].progress = Number((progress.loaded / progress.total) * 100).toFixed(2)
-              }
-            })
+            return {form, index: chunk.index, error: 0}
           })
+            // .map(({form, index}) => {
+            // this.$http.post('/uploadfile', form,{
+            //   onUploadProgress: progress => {
+            //     // 不是整体的精度条，二十每个区块有自己的进度条，整体的进度条需要计算
+            //     this.chunks[index].progress = Number((progress.loaded / progress.total) * 100).toFixed(2)
+            //   }
+            // })
+          // })
           //并发量控制
-          await Promise.all(requests)
+          // 尝试申请tcp链接过多，也会造成卡顿 异步的并发数控制，
+          // await Promise.all(requests)
+          await this.sendRequest(requests)
+          await this.mergeRequest()
+        },
+        // tcp慢启动，先上传一个初始区块，比如10kb 根据上传成功时间，决定下一个区块是20kb还是50kb还是5k
+        // 在下一个一样的逻辑 可能编程 100k 200k
+        // 上传可能报错 报错之后 进度条变红 开始重试  一个切片重试失败三次 整体全部终止
+        async sendRequest(chunks, limit = 4){
+          // limit 是并发数
+          // 核心的思路  一个数组，长度是limit [task1, task2, task3]
+          return new Promise(((resolve, reject) => {
+            const len = chunks.left
+            let count = 0
+            let isStop = false
+
+            const start = async () => {
+              if(isStop){
+                return
+              }
+              const task = chunks.shift()
+              if(task){
+                const {form, index} = task
+                try{
+                  await this.$http.post('/uploadfile', form, {
+                    onUploadProgress: progress => {
+                      this.chunks[index].progress = Number((progress.loaded / progress.total) * 100).toFixed(2)
+                    }
+                  })
+                  if(count == len -1){
+                    // 最后一个人人物
+                    resolve()
+                  }else{
+                    count++
+                    // 启动下一个任务
+                    start()
+                  }
+                }catch(e){
+                  this.chunks[index].progress = -1
+                  if(task.error < 3){
+                    task.error ++
+                    chunks.unshift(task)
+                    start()
+                  }else{
+                    // 错误三次
+                    isStop = true
+                    reject()
+                  }
+                }
+              }
+            }
+
+
+            while(limit > 0){
+              // 启动limit个任务
+              setTimeout(() => {
+                start()
+              }, Math.random() * 2000)
+              limit -= 1
+            }
+          }))
+        },
+        async mergeRequest() {
+          this.$http.post('/mergefile', {
+            ext: this.file.name.split('.').pop(),
+            size: CHUNK_SIZE,
+            hash: this.hash
+          })
         },
         handleFilerChange(e) {
 
@@ -315,10 +401,13 @@
       line-height 12px
       background-color #eee
       float left
-    >.success
-      background green
-    >.uploading
-      background blue
-    >.error
-      background red
+      .success
+        background green
+        height 12px
+      .uploading
+        background blue
+        height 12px
+      .error
+        background red
+        height 12px
 </style>
