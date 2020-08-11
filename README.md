@@ -1,6 +1,6 @@
 # study-web
 
-> My astonishing Nuxt.js project
+> My astonishing Nuxt.js project  文件上传 切片上传 大文件上传
 
 ## Build Setup
 
